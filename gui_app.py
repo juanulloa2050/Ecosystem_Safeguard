@@ -364,7 +364,7 @@ class StartPage(QWidget):
 
         header_layout = QVBoxLayout()
         header_layout.setSpacing(5)
-        title = QLabel("Cattle Detection App")
+        title = QLabel("Ecosystem Safeguard App")
         title.setObjectName("H1")
         title.setAlignment(Qt.AlignmentFlag.AlignCenter)
 

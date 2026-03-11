@@ -146,7 +146,7 @@ def procesar_carpeta_imagenes(
     ruta_carpeta_imagenes: str,
     ruta_salida: str,
     ruta_modelo: Optional[str] = None,
-    confianza: float = 0.75,
+    confianza: float = 0.5,
     iou: float = 0.45,
     img_size: int = 960,
     copiar_originales: bool = True,
