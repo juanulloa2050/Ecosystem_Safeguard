@@ -1,4 +1,0 @@
-filename,lat,lon,alt_m,datetime,detections,boxed_rel,original_rel
-VACAS.png,,,,,63,boxes/VACAS.png,originales/VACAS.png
-VACAS4.png,,,,,5,boxes/VACAS4.png,originales/VACAS4.png
-VACAS_con_gps.jpg,4.711,-74.07209999999999,2600.0,,1,boxes/VACAS_con_gps.jpg,originales/VACAS_con_gps.jpg

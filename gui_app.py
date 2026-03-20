@@ -143,6 +143,10 @@ QFrame#LogoBar {
 }
 """
 
+def resource_path(rel: str) -> Path:
+    base = Path(getattr(sys, "_MEIPASS", Path(__file__).resolve().parent))
+    return (base / rel).resolve()
+
 def app_dir() -> Path:
     if getattr(sys, "frozen", False):
         return Path(sys.executable).resolve().parent
@@ -167,35 +171,40 @@ def fade_in(widget: QWidget, duration_ms: int = 200):
     anim.start()
     widget._fade_anim = anim
 
-# --- LOGO BAR ---
 def create_logo_bar(parent=None) -> QFrame:
     frame = QFrame(parent)
     frame.setObjectName("LogoBar")
     layout = QHBoxLayout(frame)
     layout.setContentsMargins(0, 10, 0, 5)
-    layout.setSpacing(20)
+    layout.setSpacing(18)
     layout.addStretch(1)
 
-    logo_dir = app_dir() / "Logos"
-    images = []
+    # ✅ 3 fixed packaged logos
+    candidates = [
+        resource_path("assets/branding/logo_1.png"),
+        resource_path("assets/branding/logo_2.png"),
+        resource_path("assets/branding/logo_3.jpg"),
+    ]
 
-    if logo_dir.exists():
-        patterns = ["*.png", "*.jpg", "*.jpeg", "*.svg",
-                    "*.PNG", "*.JPG", "*.JPEG", "*.SVG"]
-        for pat in patterns:
-            images.extend(list(logo_dir.glob(pat)))
-
-    images = sorted(list(set(images)))
-    images = images[:4]
-
-    for img_path in images:
+    for img_path in candidates:
         lbl = QLabel()
-        pix = QPixmap(str(img_path))
-        if not pix.isNull():
-            pix = pix.scaled(130, 50, Qt.AspectRatioMode.KeepAspectRatio, Qt.TransformationMode.SmoothTransformation)
-            lbl.setPixmap(pix)
-            lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
-            layout.addWidget(lbl)
+        lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
+
+        if img_path.exists():
+            pix = QPixmap(str(img_path))
+            if not pix.isNull():
+                pix = pix.scaled(
+                    140, 52,
+                    Qt.AspectRatioMode.KeepAspectRatio,
+                    Qt.TransformationMode.SmoothTransformation
+                )
+                lbl.setPixmap(pix)
+            else:
+                lbl.setText("Logo")
+        else:
+            lbl.setText("Logo")
+
+        layout.addWidget(lbl)
 
     layout.addStretch(1)
     return frame
