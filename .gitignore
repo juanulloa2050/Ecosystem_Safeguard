@@ -1,20 +1,20 @@
-# Python cache
+
 __pycache__/
 *.py[cod]
 *$py.class
 
-# Build artifacts
+
 build/
 dist/
 output/
 Installer/installer_out/
 
-# Optional: virtual environments
+
 venv/
 .venv/
 env/
 
-# Optional: editor/system files
+
 .vscode/
 .idea/
 .DS_Store
