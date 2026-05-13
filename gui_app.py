@@ -1,8 +1,11 @@
 import sys
+import os
 import json
 import time
 import shutil
 from pathlib import Path
+
+os.environ.setdefault("QTWEBENGINE_CHROMIUM_FLAGS", "--disable-gpu")
 
 from PyQt6.QtCore import Qt, QThread, pyqtSignal, QUrl, QPropertyAnimation, QSize
 from PyQt6.QtGui import QPixmap, QIcon, QGuiApplication, QPainter, QColor
@@ -151,6 +154,15 @@ def app_dir() -> Path:
     if getattr(sys, "frozen", False):
         return Path(sys.executable).resolve().parent
     return Path(__file__).resolve().parent
+
+def app_data_dir() -> Path:
+    if not getattr(sys, "frozen", False):
+        return app_dir()
+
+    base = os.environ.get("LOCALAPPDATA")
+    if base:
+        return Path(base) / "EcosystemSafeguard"
+    return Path.home() / "AppData" / "Local" / "EcosystemSafeguard"
 
 def safe_mkdir(p: Path):
     p.mkdir(parents=True, exist_ok=True)
@@ -759,7 +771,7 @@ class MainWindow(QMainWindow):
         self.move(qr.topLeft())
 
     def run_process(self, folder):
-        self.output_dir = app_dir() / "output"
+        self.output_dir = app_data_dir() / "output"
         safe_mkdir(self.output_dir)
 
         self.page_start.set_processing(True)
@@ -787,6 +799,10 @@ def main():
     
     profile = QWebEngineProfile.defaultProfile()
     profile.setHttpUserAgent("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/90.0.4430.93 Safari/537.36")
+    profile_root = app_data_dir() / "webengine"
+    safe_mkdir(profile_root)
+    profile.setCachePath(str(profile_root / "cache"))
+    profile.setPersistentStoragePath(str(profile_root / "storage"))
 
 
     app.setStyleSheet(APP_QSS)

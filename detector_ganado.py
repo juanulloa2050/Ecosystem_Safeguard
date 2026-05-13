@@ -4,8 +4,15 @@ import time
 import json
 import csv
 import shutil
+import os
+import sys
 from pathlib import Path
 from typing import Dict, Optional, List, Callable, Any
+
+# Force CPU execution before Ultralytics imports torch.  This matters in the
+# packaged app because the build environment has a CUDA-enabled torch install.
+os.environ["CUDA_VISIBLE_DEVICES"] = "-1"
+os.environ.setdefault("CUDA_DEVICE_ORDER", "PCI_BUS_ID")
 
 import cv2
 from ultralytics import YOLO
@@ -14,7 +21,13 @@ from PIL import Image
 from PIL.ExifTags import GPSTAGS
 
 
-BASE_DIR = Path(__file__).resolve().parent
+def _runtime_base_dir() -> Path:
+    if getattr(sys, "frozen", False):
+        return Path(getattr(sys, "_MEIPASS", Path(sys.executable).resolve().parent))
+    return Path(__file__).resolve().parent
+
+
+BASE_DIR = _runtime_base_dir()
 
 
 def resolve_model_path(ruta_modelo: Optional[str] = None) -> Path:
@@ -222,6 +235,10 @@ def procesar_carpeta_imagenes(
         return {}
 
     model = YOLO(str(model_pt))
+    try:
+        model.to("cpu")
+    except Exception:
+        pass
 
     manifest_items: List[Dict] = []
     geo_features: List[Dict] = []
@@ -238,6 +255,7 @@ def procesar_carpeta_imagenes(
             conf=confianza,
             iou=iou,
             imgsz=img_size,
+            device="cpu",
             verbose=False
         )
         r = preds[0]
