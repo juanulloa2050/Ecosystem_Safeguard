@@ -187,7 +187,7 @@ def procesar_carpeta_imagenes(
     exportar_csv: bool = True,
     recursive: bool = False,
     verbose: bool = False,
-    incluir_sin_detecciones: bool = True,
+    incluir_sin_detecciones: bool = False,
     clean_output: bool = True,
     progress_cb: Optional[Callable[[int, int, str, int], None]] = None,
     **kwargs  # <--- IMPORTANTE: Acepta argumentos extra del main sin crashear

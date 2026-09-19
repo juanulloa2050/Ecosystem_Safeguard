@@ -416,7 +416,7 @@ class ProcessingWorker(QThread):
                 ruta_salida=str(self.output_root),
                 confianza=CONFIANZA_DETECCION,
                 iou=0.45,
-                incluir_sin_detecciones=True,
+                incluir_sin_detecciones=False,
                 img_size=TAMANO_ENTRADA,
                 copiar_originales=True, 
                 guardar_boxes=True,
