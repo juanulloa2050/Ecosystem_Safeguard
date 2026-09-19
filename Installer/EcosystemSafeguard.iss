@@ -1,7 +1,12 @@
 #define MyAppName "Ecosystem Safeguard"
-#define MyAppVersion "0.1.0"
+#define MyAppVersion "0.2.0"
 #define MyAppPublisher "EPICS IEEE"
 #define MyAppExeName "EcosystemSafeguard.exe"
+; Carpeta del build de PyInstaller. Se puede cambiar al compilar con
+;   ISCC /DDistDir=<ruta del build> EcosystemSafeguard.iss
+#ifndef DistDir
+  #define DistDir "..\dist\EcosystemSafeguard"
+#endif
 
 [Setup]
 ; Identificador único del programa (déjalo así para la prueba)
@@ -33,7 +38,7 @@ Name: "english"; MessagesFile: "compiler:Default.isl"
 
 [Files]
 ; ✅ Copia TODO el contenido de dist\EcosystemSafeguard\ al directorio de instalación
-Source: "..\dist\EcosystemSafeguard\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
+Source: "{#DistDir}\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
 
 [Icons]
 ; ✅ Acceso directo en Start Menu

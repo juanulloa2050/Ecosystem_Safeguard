@@ -20,6 +20,24 @@ from ultralytics import YOLO
 from PIL import Image
 from PIL.ExifTags import GPSTAGS
 
+# Formatos RAW (los DJI guardan DNG). OpenCV/Ultralytics no los leen, hay que
+# revelarlos con rawpy (LibRaw).
+RAW_EXT = {".dng"}
+
+
+def _load_raw_bgr(image_path: Path):
+    """Revela un RAW a un array BGR de 8 bits (formato que espera Ultralytics).
+
+    half_size=True: 8192x4608 -> 4096x2304. Es 4x mas rapido y no pierde nada
+    util, porque el modelo redimensiona la entrada a img_size de todos modos.
+    """
+    import rawpy  # import perezoso: solo hace falta si hay RAW en la carpeta
+
+    with rawpy.imread(str(image_path)) as raw:
+        rgb = raw.postprocess(use_camera_wb=True, half_size=True,
+                              no_auto_bright=False, output_bps=8)
+    return cv2.cvtColor(rgb, cv2.COLOR_RGB2BGR)
+
 
 def _runtime_base_dir() -> Path:
     if getattr(sys, "frozen", False):
@@ -169,6 +187,7 @@ def procesar_carpeta_imagenes(
     exportar_csv: bool = True,
     recursive: bool = False,
     verbose: bool = False,
+    incluir_sin_detecciones: bool = True,
     clean_output: bool = True,
     progress_cb: Optional[Callable[[int, int, str, int], None]] = None,
     **kwargs  # <--- IMPORTANTE: Acepta argumentos extra del main sin crashear
@@ -204,11 +223,12 @@ def procesar_carpeta_imagenes(
     out_originales.mkdir(parents=True, exist_ok=True)
     out_boxes.mkdir(parents=True, exist_ok=True)
 
-    valid_ext = {".jpg", ".jpeg", ".png", ".bmp", ".tiff", ".webp"}
+    valid_ext = {".jpg", ".jpeg", ".png", ".bmp", ".tiff", ".webp"} | RAW_EXT
     if recursive:
         images = [p for p in input_dir.rglob("*") if p.is_file() and p.suffix.lower() in valid_ext]
     else:
         images = [p for p in input_dir.iterdir() if p.is_file() and p.suffix.lower() in valid_ext]
+    images.sort(key=lambda p: p.name.lower())
 
     total = len(images)
     if total == 0:
@@ -249,9 +269,20 @@ def procesar_carpeta_imagenes(
 
     for idx, img_path in enumerate(images, 1):
         filename = img_path.name
+        is_raw = img_path.suffix.lower() in RAW_EXT
+        # Las imagenes derivadas de un RAW se guardan como JPG para poder verlas.
+        view_name = img_path.stem + ".jpg" if is_raw else filename
+
+        try:
+            source = _load_raw_bgr(img_path) if is_raw else str(img_path)
+        except Exception as e:
+            print("No se pudo leer", img_path, "->", repr(e))
+            if progress_cb:
+                progress_cb(idx, total, filename, 0)
+            continue
 
         preds = model.predict(
-            source=str(img_path),
+            source=source,
             conf=confianza,
             iou=iou,
             imgsz=img_size,
@@ -264,10 +295,11 @@ def procesar_carpeta_imagenes(
         if progress_cb:
             progress_cb(idx, total, filename, int(num_det))
 
-        if num_det <= 0:
+        if num_det <= 0 and not incluir_sin_detecciones:
             continue
 
-        with_cattle += 1
+        if num_det > 0:
+            with_cattle += 1
 
         original_rel = None
         boxed_rel = None
@@ -278,12 +310,12 @@ def procesar_carpeta_imagenes(
             original_rel = str(Path("originales") / filename).replace("\\", "/")
 
         if guardar_boxes:
-            dst = out_boxes / filename
-            # --- CORRECCIÓN AQUÍ: conf=False para ocultar el score ---
-            # Si tampoco quieres el nombre (ej. "Cow"), pon labels=False
-            img_annot = r.plot(conf=False)  
+            dst = out_boxes / view_name
+            # El modelo tiene una sola clase, asi que la etiqueta no aporta y
+            # en rebanos densos tapa por completo la imagen: solo cajas.
+            img_annot = r.plot(conf=False, labels=False)
             cv2.imwrite(str(dst), img_annot)
-            boxed_rel = str(Path("boxes") / filename).replace("\\", "/")
+            boxed_rel = str(Path("boxes") / view_name).replace("\\", "/")
 
         gps = extract_gps_from_image(img_path)
 

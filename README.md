@@ -14,7 +14,7 @@ Ecosystem Safeguard fue desarrollado para analizar imágenes capturadas por dron
 
 ## Características principales
 - Interfaz gráfica de escritorio
-- Procesamiento por lotes de imágenes
+- Procesamiento por lotes de imágenes (JPG, PNG, TIFF, WEBP y RAW `.DNG` de drones DJI)
 - Detección de ganado con modelo YOLO
 - Extracción de geolocalización desde metadata EXIF
 - Vista de inspección individual por imagen
@@ -62,6 +62,7 @@ Tecnologías asociadas:
 - Ultralytics
 - OpenCV
 - Pillow
+- rawpy (revelado de archivos RAW `.DNG`)
 
 ### 3. Modelo (`models/best.pt`)
 Modelo entrenado para la detección de ganado bovino.

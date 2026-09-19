@@ -23,6 +23,15 @@ from PyQt6.QtWebEngineWidgets import QWebEngineView
 import folium
 from folium.plugins import MarkerCluster
 
+# Umbral de confianza del detector. El valor anterior era demasiado alto y
+# dejaba casi todas las imagenes sin ninguna deteccion.
+CONFIANZA_DETECCION = 0.40
+
+# Tamano de entrada del modelo. Las fotos del dron son de 8192 px: a 960 cada
+# vaca queda en ~6 px y el modelo pierde casi la mitad del rebano en tomas
+# altas. 1280 las recupera sin ruido extra apreciable (1920 no mejoro mas).
+TAMANO_ENTRADA = 1280
+
 # Intentar importar el detector, si falla usar dummy para pruebas
 try:
     from detector_ganado import procesar_carpeta_imagenes
@@ -223,43 +232,152 @@ def create_logo_bar(parent=None) -> QFrame:
 
 # --- FUNCIONES DE MAPA ---
 
-def create_message_map_html(output_root: Path, message: str) -> Path:
-    """Crea un mapa limpio sin marcadores si no hay GPS"""
-    html_path = output_root / "_map_message.html"
-    # Centrado general (Colombia aprox), sin Marker
-    m = folium.Map(location=[4.0, -73.0], zoom_start=5, tiles="OpenStreetMap", control_scale=True)
-    # NO AGREGAMOS MARKER AQUI
+# Identificacion requerida por la politica de uso de teselas.
+# OJO: NO usar un User-Agent de navegador falso. OSM bloquea las peticiones que
+# se presentan como navegador pero llegan sin cabecera Referer (que es justo el
+# caso de una pagina cargada desde file:// dentro de QWebEngineView): responde
+# 200 con la cabecera "x-blocked" y una imagen de "Access denied", por lo que el
+# mapa se ve vacio/gris.
+APP_USER_AGENT = (
+    "EcosystemSafeguard/1.0 "
+    "(+https://github.com/juanulloa2050/Ecosystem_Safeguard)"
+)
+
+# Con el User-Agent de arriba, OSM sirve las teselas con normalidad.
+# NO volver a basemaps.cartocdn.com ni cartodb-basemaps-*.fastly.net: desde
+# hace un tiempo devuelven la tesela con la marca de agua "API KEY REQUIRED"
+# incrustada, y con HTTP 200 (mirar solo el codigo de respuesta no lo detecta).
+_OSM_URL = "https://tile.openstreetmap.org/{z}/{x}/{y}.png"
+_OSM_ATTR = "&copy; OpenStreetMap contributors"
+_ESRI_URL = ("https://server.arcgisonline.com/ArcGIS/rest/services/"
+             "World_Imagery/MapServer/tile/{z}/{y}/{x}")
+_ESRI_ATTR = "Tiles &copy; Esri"
+
+# Aviso si las teselas no cargan (sin internet o proveedor caido).
+_TILE_ERROR_JS = """
+<script>
+document.addEventListener("DOMContentLoaded", function () {
+  setTimeout(function () {
+    var key = Object.keys(window).find(function (k) {
+      return k.indexOf("map_") === 0 && window[k] && window[k]._container;
+    });
+    if (!key) return;
+    var shown = false;
+    window[key].eachLayer(function (layer) {
+      if (!layer.on || !layer._url) return;
+      layer.on("tileerror", function () {
+        if (shown) return;
+        shown = true;
+        var d = document.createElement("div");
+        d.textContent = "Sin conexion: no se pudo cargar el mapa base.";
+        d.style.cssText = "position:absolute;z-index:9999;top:8px;left:8px;" +
+          "right:8px;padding:8px 10px;background:#FEF3C7;color:#92400E;" +
+          "border:1px solid #FCD34D;border-radius:8px;font:13px sans-serif;" +
+          "text-align:center;";
+        document.body.appendChild(d);
+      });
+    });
+  }, 300);
+});
+</script>
+"""
+
+
+def _new_map(location, zoom):
+    """Mapa base OSM (por defecto) + satelite Esri seleccionable."""
+    m = folium.Map(location=location, zoom_start=zoom, tiles=None,
+                   control_scale=True)
+    folium.TileLayer(_OSM_URL, attr=_OSM_ATTR, name="Mapa",
+                     max_zoom=19).add_to(m)
+    # show=False: el satelite queda disponible en el selector de capas, pero
+    # el mapa de calles es el que se ve al abrir.
+    folium.TileLayer(_ESRI_URL, attr=_ESRI_ATTR, name="Satelite",
+                     max_zoom=19, show=False).add_to(m)
+    return m
+
+
+def _save_map(m, html_path: Path, with_layer_control: bool = True) -> Path:
+    if with_layer_control:
+        folium.LayerControl(collapsed=True).add_to(m)
+    m.get_root().html.add_child(folium.Element(_TILE_ERROR_JS))
+    safe_mkdir(html_path.parent)
     m.save(str(html_path))
     return html_path
 
-def create_single_point_map_html(output_root: Path, lat, lon, title="Location") -> Path:
-    html_path = output_root / "_map_current.html"
+
+def _banner(m, text: str):
+    html = (
+        '<div style="position:absolute;z-index:9999;top:8px;left:8px;right:8px;'
+        'padding:8px 10px;background:#F1F5F9;color:#475569;border:1px solid '
+        '#CBD5E1;border-radius:8px;font:13px sans-serif;text-align:center;">'
+        f'{text}</div>'
+    )
+    m.get_root().html.add_child(folium.Element(html))
+
+
+def _map_path(output_root: Path, stem: str) -> Path:
+    """Ruta nueva en cada llamada para que QWebEngineView no sirva cache."""
+    folder = output_root / "_maps"
+    safe_mkdir(folder)
+    # Borra solo los mapas ya viejos: el anterior puede seguir cargandose en el
+    # QWebEngineView cuando se navega rapido entre imagenes.
+    cutoff = time.time() - 30
+    for prev in folder.glob(f"{stem}_*.html"):
+        try:
+            if prev.stat().st_mtime < cutoff:
+                prev.unlink()
+        except OSError:
+            pass
+    return folder / f"{stem}_{int(time.time() * 1000)}.html"
+
+
+def create_message_map_html(output_root: Path, message: str) -> Path:
+    """Mapa limpio, sin marcadores, cuando no hay GPS."""
+    m = _new_map([4.0, -73.0], 5)
+    _banner(m, message)
+    return _save_map(m, _map_path(output_root, "msg"))
+
+
+def create_single_point_map_html(output_root: Path, lat, lon,
+                                 title="Location") -> Path:
     if lat is None or lon is None:
-        return create_message_map_html(output_root, "No GPS metadata found.")
-    
-    m = folium.Map(location=[lat, lon], zoom_start=18, tiles="OpenStreetMap", control_scale=True)
-    folium.CircleMarker([lat, lon], radius=10, weight=3, color="#16A34A", fill=True).add_to(m)
+        return create_message_map_html(output_root,
+                                       "Esta imagen no tiene metadatos GPS.")
+
+    m = _new_map([lat, lon], 17)
+    folium.CircleMarker([lat, lon], radius=10, weight=3, color="#16A34A",
+                        fill=True, fill_opacity=0.5).add_to(m)
     folium.Marker([lat, lon], popup=title, tooltip=title).add_to(m)
-    m.save(str(html_path))
-    return html_path
+    return _save_map(m, _map_path(output_root, "point"))
+
 
 def create_all_points_map_html(output_root: Path, items: list[dict]) -> Path:
-    html_path = output_root / "_map_summary.html"
     valid = [it for it in items if it.get("gps", {}).get("lat") is not None]
     if not valid:
-        return create_message_map_html(output_root, "No valid GPS points found.")
+        return create_message_map_html(
+            output_root, "Ninguna imagen procesada tiene metadatos GPS.")
 
-    lat0 = valid[0]["gps"]["lat"]
-    lon0 = valid[0]["gps"]["lon"]
-    m = folium.Map(location=[lat0, lon0], zoom_start=10, tiles="OpenStreetMap", control_scale=True)
-    cluster = MarkerCluster().add_to(m)
+    lats = [it["gps"]["lat"] for it in valid]
+    lons = [it["gps"]["lon"] for it in valid]
+    m = _new_map([sum(lats) / len(lats), sum(lons) / len(lons)], 10)
+
+    cluster = MarkerCluster(name="Puntos").add_to(m)
     for it in valid:
-        lat = it["gps"]["lat"]
-        lon = it["gps"]["lon"]
+        lat, lon = it["gps"]["lat"], it["gps"]["lon"]
         fn = it.get("filename", "img")
-        folium.Marker([lat, lon], tooltip=fn).add_to(cluster)
-    m.save(str(html_path))
-    return html_path
+        det = int(it.get("detections", 0) or 0)
+        color = "green" if det > 0 else "gray"
+        folium.Marker(
+            [lat, lon],
+            tooltip=f"{fn} - {det} deteccion(es)",
+            icon=folium.Icon(color=color, icon="info-sign"),
+        ).add_to(cluster)
+
+    if len(valid) > 1:
+        m.fit_bounds([[min(lats), min(lons)], [max(lats), max(lons)]],
+                     padding=(25, 25))
+    return _save_map(m, _map_path(output_root, "summary"))
+
 
 def copy_outputs_for_user(output_root: Path, dest_folder: Path):
     safe_mkdir(dest_folder)
@@ -296,9 +414,10 @@ class ProcessingWorker(QThread):
             procesar_carpeta_imagenes(
                 ruta_carpeta_imagenes=str(self.input_folder),
                 ruta_salida=str(self.output_root),
-                confianza=0.75, 
-                iou=0.45, 
-                img_size=960,
+                confianza=CONFIANZA_DETECCION,
+                iou=0.45,
+                incluir_sin_detecciones=True,
+                img_size=TAMANO_ENTRADA,
                 copiar_originales=True, 
                 guardar_boxes=True,
                 exportar_manifest=True, 
@@ -320,7 +439,7 @@ class ProcessingWorker(QThread):
                 procesar_carpeta_imagenes(
                     ruta_carpeta_imagenes=str(self.input_folder),
                     ruta_salida=str(self.output_root),
-                    confianza=0.75, iou=0.45, img_size=960,
+                    confianza=CONFIANZA_DETECCION, iou=0.45, img_size=TAMANO_ENTRADA,
                     copiar_originales=True, guardar_boxes=True,
                     exportar_manifest=True, exportar_csv=True,
                     clean_output=True, progress_cb=_cb
@@ -619,7 +738,7 @@ class ViewerPage(QWidget):
     def show_item(self, idx, row):
         data = self.items[idx]
 
-        b_rel = data.get("boxed_rel")
+        b_rel = data.get("boxed_rel") or data.get("original_rel")
         if b_rel and self.output_root:
             p = self.output_root / b_rel
             if p.exists():
@@ -637,15 +756,22 @@ class ViewerPage(QWidget):
             f"Lat: {gps.get('lat', 'N/A')}<br>"
             f"Lon: {gps.get('lon', 'N/A')}"
         )
-        self.lbl_chip.setText(f"DETECTED: {data.get('detections')}")
+        det = int(data.get("detections", 0) or 0)
+        if det > 0:
+            self.lbl_chip.setText(f"DETECTED: {det}")
+            self.lbl_chip.setStyleSheet(
+                "background:#DCFCE7;color:#166534;border:1px solid #86EFAC;")
+        else:
+            self.lbl_chip.setText("NO CATTLE")
+            self.lbl_chip.setStyleSheet(
+                "background:#F1F5F9;color:#475569;border:1px solid #CBD5E1;")
 
         lat, lon = gps.get("lat"), gps.get("lon")
         mp = create_single_point_map_html(self.output_root, lat, lon, data.get("filename"))
 
-        # Cargar HTML con URL base para asegurar assets
-        html = mp.read_text(encoding="utf-8")
-        base = QUrl.fromLocalFile(str(mp.parent.resolve()) + "/")
-        self.map_view.setHtml(html, baseUrl=base)
+        # Cargar como file:// real: setHtml() rompe la carga de recursos
+        # remotos (leaflet + teselas) dentro de QWebEngineView.
+        self.map_view.load(QUrl.fromLocalFile(str(mp.resolve())))
 
         self.lbl_count.setText(f"{row + 1} / {len(self.filtered)}")
 
@@ -725,9 +851,7 @@ class SummaryPage(QWidget):
 
         mp = create_all_points_map_html(output_root, man.get("images", []))
 
-        html = mp.read_text(encoding="utf-8")
-        base = QUrl.fromLocalFile(str(mp.parent.resolve()) + "/")
-        self.map_view.setHtml(html, baseUrl=base)
+        self.map_view.load(QUrl.fromLocalFile(str(mp.resolve())))
 
     def export_data(self):
         if not self.output_root:
@@ -798,7 +922,7 @@ def main():
     app = QApplication(sys.argv)
     
     profile = QWebEngineProfile.defaultProfile()
-    profile.setHttpUserAgent("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/90.0.4430.93 Safari/537.36")
+    profile.setHttpUserAgent(APP_USER_AGENT)
     profile_root = app_data_dir() / "webengine"
     safe_mkdir(profile_root)
     profile.setCachePath(str(profile_root / "cache"))

@@ -1,13 +1,26 @@
 # -*- mode: python ; coding: utf-8 -*-
-from PyInstaller.utils.hooks import collect_data_files
+import importlib.util
+from pathlib import Path
+
+from PyInstaller.utils.hooks import collect_data_files, collect_dynamic_libs
 
 
 datas = [
     ("models\\best.pt", "models"),
     ("assets", "assets"),
 ]
-binaries = []
+binaries = collect_dynamic_libs("rawpy")
+
+# torchvision >= 0.29 renombro sus extensiones nativas (_C -> _C_stable,
+# image -> image_stable) y las carga por ruta con torch.ops.load_library. El
+# hook de PyInstaller aun busca "torchvision._C", asi que no las empaqueta y el
+# .exe falla con "operator torchvision::nms does not exist". Se copian a mano.
+_tv_dir = Path(importlib.util.find_spec("torchvision").origin).parent
+for _f in list(_tv_dir.glob("*.pyd")) + list(_tv_dir.glob("*.dll")):
+    binaries.append((str(_f), "torchvision"))
 hiddenimports = [
+    "rawpy",
+    "rawpy._rawpy",
     "ultralytics.nn.tasks",
     "ultralytics.models.yolo.detect.predict",
     "ultralytics.utils.ops",
