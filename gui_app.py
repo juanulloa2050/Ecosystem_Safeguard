@@ -23,9 +23,12 @@ from PyQt6.QtWebEngineWidgets import QWebEngineView
 import folium
 from folium.plugins import MarkerCluster
 
-# Umbral de confianza del detector. El valor anterior era demasiado alto y
-# dejaba casi todas las imagenes sin ninguna deteccion.
-CONFIANZA_DETECCION = 0.40
+# Umbral de confianza del detector, medido contra un conteo manual de 10 fotos
+# de dron (86 vacas reales) a TAMANO_ENTRADA=1280:
+#   0.40 -> 66 vacas, 6 falsos positivos | 0.60 -> 58 vacas, 1 falso
+#   0.75 -> 30 vacas, 0 falsos (y a 960 solo 20: casi no detectaba nada)
+# Por debajo de 0.60 empiezan a colarse techos, paredes y bebederos.
+CONFIANZA_DETECCION = 0.60
 
 # Tamano de entrada del modelo. Las fotos del dron son de 8192 px: a 960 cada
 # vaca queda en ~6 px y el modelo pierde casi la mitad del rebano en tomas
